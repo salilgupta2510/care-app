@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helpers
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isDoctor() {
+      return isAuthenticated() && request.auth.token.role == 'doctor';
+    }
+
+    function isHealthcareWorker() {
+      return isAuthenticated() && request.auth.token.role in ['doctor', 'assistant'];
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users: read own profile only
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Only backend can write user profiles
+    }
+
+    // Patients: healthcare workers can read; only doctors can create/update
+    match /patients/{patientId} {
+      allow read: if isHealthcareWorker();
+      allow create, update: if isDoctor();
+      allow delete: if false;
+    }
+
+    // Chats: healthcare workers can read and update status/assignment
+    match /chats/{chatId} {
+      allow read: if isHealthcareWorker();
+      allow update: if isHealthcareWorker() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['assignedTo', 'status', 'unreadCount']);
+      allow create, delete: if false; // Only functions create chats
+
+      // Messages: readable by healthcare workers, no client writes
+      match /messages/{messageId} {
+        allow read: if isHealthcareWorker();
+        allow write: if false; // Only functions write messages
+      }
+    }
+
+    // Summaries: read-only for healthcare workers
+    match /summaries/{summaryId} {
+      allow read: if isHealthcareWorker();
+      allow write: if false;
+    }
+
+    // Audit log: write-only from functions (no client access)
+    match /auditLog/{logId} {
+      allow read, write: if false;
+    }
+  }
+}
